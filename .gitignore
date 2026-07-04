@@ -1,0 +1,29 @@
+# Gradle
+.gradle/
+build/
+*/build/
+
+# Android Studio
+.idea/
+*.iml
+
+# Local config
+local.properties
+.env
+.env.*
+
+# Signing keys
+*.jks
+*.keystore
+*.p12
+*.pem
+
+# Google services local files
+google-services.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
