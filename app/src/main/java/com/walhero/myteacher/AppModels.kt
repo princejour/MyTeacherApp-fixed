@@ -19,6 +19,7 @@ enum class AppScreen {
     Home,
     TeacherLogin,
     TeacherDashboard,
+    TeacherStudentDetails,
     ParentAccess,
     ParentInbox
 }

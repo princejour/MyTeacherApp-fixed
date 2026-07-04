@@ -1,4 +1,62 @@
-package com.walhero.myteacher
+import os
+
+my_teacher_app = """package com.walhero.myteacher
+
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+
+@Composable
+fun MyTeacherApp() {
+    var screen by remember { mutableStateOf(AppScreen.Home) }
+    var teacherPasscode by rememberSaveable { mutableStateOf("teacher123") }
+    var activeStudent by remember { mutableStateOf<Student?>(null) }
+    
+    val students = remember { mutableStateListOf<Student>() }
+    val messages = remember { mutableStateListOf<TeacherMessage>() }
+
+    when (screen) {
+        AppScreen.Home -> HomeScreen(
+            onTeacher = { screen = AppScreen.TeacherLogin },
+            onParent = { screen = AppScreen.ParentAccess }
+        )
+        AppScreen.TeacherLogin -> TeacherLoginScreen(
+            passcode = teacherPasscode,
+            onPasscodeChanged = { teacherPasscode = it },
+            onSuccess = { screen = AppScreen.TeacherDashboard },
+            onBack = { screen = AppScreen.Home }
+        )
+        AppScreen.TeacherDashboard -> TeacherDashboardScreen(
+            students = students,
+            messages = messages,
+            onBack = { screen = AppScreen.Home }
+        )
+        AppScreen.ParentAccess -> ParentAccessScreen(
+            students = students,
+            onOpenInbox = {
+                activeStudent = it
+                screen = AppScreen.ParentInbox
+            },
+            onBack = { screen = AppScreen.Home }
+        )
+        AppScreen.ParentInbox -> ParentInboxScreen(
+            student = activeStudent,
+            messages = messages,
+            freeOpened = emptyMap(),
+            adUnlocked = emptySet(),
+            onOpenFree = { _, _ -> },
+            onRewardedUnlock = { _ -> },
+            onBack = { screen = AppScreen.ParentAccess }
+        )
+    }
+}
+"""
+
+teacher_screens = """package com.walhero.myteacher
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -9,9 +67,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -45,7 +100,7 @@ fun TeacherLoginScreen(
                 title = { Text("تسجيل دخول المعلمة") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
@@ -149,12 +204,15 @@ fun ChangePasscodeDialog(currentPasscode: String, onDismiss: () -> Unit, onSave:
 @Composable
 fun TeacherDashboardScreen(
     students: MutableList<Student>,
-    messages: List<TeacherMessage>,
-    onStudentClick: (Student) -> Unit,
+    messages: MutableList<TeacherMessage>,
     onBack: () -> Unit
 ) {
     var selectedClass by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedStudentId by rememberSaveable { mutableStateOf<String?>(null) }
+    var title by rememberSaveable { mutableStateOf("") }
+    var body by rememberSaveable { mutableStateOf("") }
     var notice by remember { mutableStateOf<String?>(null) }
+    
     var showAddDialog by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
@@ -199,7 +257,7 @@ fun TeacherDashboardScreen(
                 title = { Text("لوحة المعلمة") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
@@ -215,9 +273,9 @@ fun TeacherDashboardScreen(
         ) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { csvLauncher.launch("*/*") }, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.AutoMirrored.Filled.List, contentDescription = null)
+                    Icon(Icons.Default.Upload, contentDescription = null)
                     Spacer(Modifier.width(4.dp))
-                    Text("استيراد قسم")
+                    Text("استيراد قائمة قسم")
                 }
                 FilledTonalButton(onClick = { showAddDialog = true }, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Default.Add, contentDescription = null)
@@ -247,7 +305,10 @@ fun TeacherDashboardScreen(
                     classes.forEach { className ->
                         FilterChip(
                             selected = selectedClass == className,
-                            onClick = { selectedClass = if (selectedClass == className) null else className },
+                            onClick = { 
+                                selectedClass = if (selectedClass == className) null else className
+                                selectedStudentId = null
+                            },
                             label = { Text(className) }
                         )
                     }
@@ -257,14 +318,10 @@ fun TeacherDashboardScreen(
                     Text("التلاميذ", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     val classStudents = students.filter { it.className == selectedClass }
                     classStudents.forEach { student ->
-                        val studentMessages = messages.filter { it.studentId == student.id }
-                        val messageCount = studentMessages.size
-                        val lastMessageDate = studentMessages.firstOrNull()?.date ?: "لا يوجد"
-                        
                         Card(
-                            onClick = { onStudentClick(student) },
+                            onClick = { selectedStudentId = student.id },
                             colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                containerColor = if (selectedStudentId == student.id) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
                             ),
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -273,15 +330,41 @@ fun TeacherDashboardScreen(
                                     Text(student.name, fontWeight = FontWeight.Bold)
                                     Text("كود: \${student.parentCode}", style = MaterialTheme.typography.bodySmall)
                                 }
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text("الرسائل: \$messageCount", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                                    Text("آخر رسالة: \$lastMessageDate", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (selectedStudentId == student.id) {
+                                    Icon(Icons.Default.CheckCircle, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
                                 }
                             }
                         }
                     }
                 }
             }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            Text("إرسال رسالة جديدة", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            OutlinedTextField(title, { title = it }, label = { Text("العنوان") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(body, { body = it }, label = { Text("المحتوى") }, modifier = Modifier.fillMaxWidth(), minLines = 4)
+            Button(
+                onClick = {
+                    if (selectedStudentId != null && title.isNotBlank() && body.isNotBlank()) {
+                        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                        val today = sdf.format(Date())
+                        messages.add(0, TeacherMessage(UUID.randomUUID().toString(), selectedStudentId!!, title, body, today))
+                        title = ""
+                        body = ""
+                        notice = "تم إرسال الرسالة بنجاح."
+                    } else {
+                        notice = "يرجى تحديد تلميذ وكتابة العنوان والمحتوى."
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(16.dp)
+            ) {
+                Icon(Icons.Default.Send, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("إرسال")
+            }
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 
@@ -327,160 +410,194 @@ fun TeacherDashboardScreen(
         )
     }
 }
+"""
+
+home_screen = """package com.walhero.myteacher
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TeacherStudentDetailsScreen(
-    student: Student,
-    messages: MutableList<TeacherMessage>,
+fun HomeScreen(onTeacher: () -> Unit, onParent: () -> Unit) {
+    Scaffold(
+        topBar = { TopAppBar(title = { Text("تطبيقي المدرسي") }) }
+    ) { padding ->
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding).padding(32.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
+            Spacer(modifier = Modifier.height(24.dp))
+            Text("مرحباً بك", style = MaterialTheme.typography.headlineMedium)
+            Text("الرجاء اختيار نوع الدخول", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(modifier = Modifier.height(32.dp))
+            
+            Button(
+                onClick = onParent,
+                modifier = Modifier.fillMaxWidth().height(56.dp)
+            ) {
+                Text("دخول الولي", style = MaterialTheme.typography.titleMedium)
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedButton(
+                onClick = onTeacher,
+                modifier = Modifier.fillMaxWidth().height(56.dp)
+            ) {
+                Icon(Icons.Default.Settings, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("دخول المعلمة", style = MaterialTheme.typography.titleMedium)
+            }
+        }
+    }
+}
+"""
+
+parent_screens = """package com.walhero.myteacher
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ParentAccessScreen(
+    students: List<Student>,
+    onOpenInbox: (Student) -> Unit,
     onBack: () -> Unit
 ) {
-    var showSendDialog by remember { mutableStateOf(false) }
-    var notice by remember { mutableStateOf<String?>(null) }
-    
-    val studentMessages = messages.filter { it.studentId == student.id }
+    var code by rememberSaveable { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("ملف التلميذ") },
+                title = { Text("دخول الولي") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
+                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
                 }
             )
         }
     ) { padding ->
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
+            modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Student Details Header
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("الاسم: \${student.name}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("القسم: \${student.className}", style = MaterialTheme.typography.bodyLarge)
-                    Text("الكود: \${student.parentCode}", style = MaterialTheme.typography.bodyLarge)
-                }
-            }
-            
-            if (notice != null) {
-                Text(
-                    text = notice.orEmpty(),
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-
-            // Actions
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.Center
-            ) {
-                Button(
-                    onClick = { showSendDialog = true },
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(16.dp)
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("إرسال رسالة جديدة")
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                "سجل الرسائل",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 16.dp)
+            Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(24.dp))
+            OutlinedTextField(
+                value = code,
+                onValueChange = { code = it },
+                label = { Text("كود التلميذ") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            if (studentMessages.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("لم يتم إرسال أي رسالة بعد.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (error != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = {
+                    val s = students.find { it.parentCode == code }
+                    if (s != null) {
+                        error = null
+                        onOpenInbox(s)
+                    } else {
+                        error = "كود غير صحيح"
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(16.dp)
+            ) { Text("دخول") }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ParentInboxScreen(
+    student: Student?,
+    messages: List<TeacherMessage>,
+    freeOpened: Map<String, Set<String>>,
+    adUnlocked: Set<String>,
+    onOpenFree: (String, String) -> Unit,
+    onRewardedUnlock: (String) -> Unit,
+    onBack: () -> Unit
+) {
+    if (student == null) {
+        onBack()
+        return
+    }
+    
+    val myMessages = messages.filter { it.studentId == student.id }
+    
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("رسائل \${student.name}") },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") } }
+            )
+        }
+    ) { padding ->
+        if (myMessages.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(16.dp))
+                    Text("لا توجد رسائل حالياً.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(studentMessages) { msg ->
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                        ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(msg.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                    Text(msg.date, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                Spacer(Modifier.height(8.dp))
-                                Text(msg.body, style = MaterialTheme.typography.bodyMedium)
-                            }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(myMessages) { msg ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(msg.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text(msg.date, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(8.dp))
+                            Text(msg.body, style = MaterialTheme.typography.bodyMedium)
                         }
                     }
                 }
             }
         }
     }
-
-    if (showSendDialog) {
-        var title by rememberSaveable { mutableStateOf("") }
-        var body by rememberSaveable { mutableStateOf("") }
-        var error by remember { mutableStateOf<String?>(null) }
-        
-        AlertDialog(
-            onDismissRequest = { showSendDialog = false },
-            title = { Text("رسالة جديدة لـ \${student.name}") },
-            text = {
-                Column {
-                    OutlinedTextField(title, { title = it }, label = { Text("العنوان") }, modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(body, { body = it }, label = { Text("المحتوى") }, modifier = Modifier.fillMaxWidth(), minLines = 4)
-                    if (error != null) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
-                    }
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    if (title.isNotBlank() && body.isNotBlank()) {
-                        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
-                        val now = sdf.format(Date())
-                        messages.add(0, TeacherMessage(UUID.randomUUID().toString(), student.id, title, body, now))
-                        showSendDialog = false
-                        notice = "تم إرسال الرسالة بنجاح."
-                    } else {
-                        error = "يرجى كتابة العنوان والمحتوى."
-                    }
-                }) { Text("إرسال") }
-            },
-            dismissButton = { TextButton(onClick = { showSendDialog = false }) { Text("إلغاء") } }
-        )
-    }
 }
+"""
+
+with open("app/src/main/java/com/walhero/myteacher/MyTeacherApp.kt", "w") as f:
+    f.write(my_teacher_app)
+with open("app/src/main/java/com/walhero/myteacher/TeacherScreens.kt", "w") as f:
+    f.write(teacher_screens)
+with open("app/src/main/java/com/walhero/myteacher/HomeScreen.kt", "w") as f:
+    f.write(home_screen)
+with open("app/src/main/java/com/walhero/myteacher/ParentScreens.kt", "w") as f:
+    f.write(parent_screens)
+
