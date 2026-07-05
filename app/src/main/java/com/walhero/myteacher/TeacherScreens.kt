@@ -160,6 +160,7 @@ fun TeacherDashboardScreen(
     val context = LocalContext.current
     val contentResolver = context.contentResolver
 
+
     val csvLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) {
             try {
@@ -181,7 +182,7 @@ fun TeacherDashboardScreen(
                                 while (entry != null) {
                                     if (entry.name == "xl/sharedStrings.xml") {
                                         sharedStringsXml = zis.readBytes()
-                                    } else if (entry.name == "xl/worksheets/sheet1.xml" || entry.name == "xl/worksheets/sheet.xml") {
+                                    } else if (entry.name.startsWith("xl/worksheets/sheet") && entry.name.endsWith(".xml") && sheetXml == null) {
                                         sheetXml = zis.readBytes()
                                     }
                                     zis.closeEntry()
@@ -196,13 +197,16 @@ fun TeacherDashboardScreen(
                                 
                                 var eventType = parser.eventType
                                 var currentText = ""
+                                var inSi = false
                                 var inT = false
                                 while (eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
                                     when (eventType) {
                                         org.xmlpull.v1.XmlPullParser.START_TAG -> {
-                                            if (parser.name == "t") {
-                                                inT = true
+                                            if (parser.name == "si") {
+                                                inSi = true
                                                 currentText = ""
+                                            } else if (parser.name == "t" && inSi) {
+                                                inT = true
                                             }
                                         }
                                         org.xmlpull.v1.XmlPullParser.TEXT -> {
@@ -213,6 +217,8 @@ fun TeacherDashboardScreen(
                                         org.xmlpull.v1.XmlPullParser.END_TAG -> {
                                             if (parser.name == "t") {
                                                 inT = false
+                                            } else if (parser.name == "si") {
+                                                inSi = false
                                                 sharedStrings.add(currentText)
                                             }
                                         }
@@ -243,6 +249,8 @@ fun TeacherDashboardScreen(
                                             } else if (parser.name == "c") {
                                                 cellType = parser.getAttributeValue(null, "t") ?: ""
                                                 cellRef = parser.getAttributeValue(null, "r") ?: ""
+                                                currentV = ""
+                                                inV = false
                                                 
                                                 val colStr = cellRef.takeWhile { it.isLetter() }
                                                 var colIdx = 0
@@ -255,9 +263,8 @@ fun TeacherDashboardScreen(
                                                     currentRow.add("")
                                                     currentCellIndex++
                                                 }
-                                            } else if (parser.name == "v" || parser.name == "t" || parser.name == "is") {
+                                            } else if (parser.name == "v" || parser.name == "t") {
                                                 inV = true
-                                                currentV = ""
                                             }
                                         }
                                         org.xmlpull.v1.XmlPullParser.TEXT -> {
@@ -266,7 +273,7 @@ fun TeacherDashboardScreen(
                                             }
                                         }
                                         org.xmlpull.v1.XmlPullParser.END_TAG -> {
-                                            if (parser.name == "v" || parser.name == "t" || parser.name == "is") {
+                                            if (parser.name == "v" || parser.name == "t") {
                                                 inV = false
                                             } else if (parser.name == "c") {
                                                 var value = currentV
@@ -288,10 +295,10 @@ fun TeacherDashboardScreen(
                                     eventType = parser.next()
                                 }
                             } else {
-                                fileParseError = "Invalid XLSX file structure."
+                                fileParseError = "Please select a valid student list file."
                             }
                         } catch (e: Exception) {
-                            fileParseError = "Error parsing XLSX file."
+                            fileParseError = "Please select a valid student list file."
                         }
                     } else {
                         var contentStr = ""
@@ -327,7 +334,7 @@ fun TeacherDashboardScreen(
                         }
 
                         if (encodingError || contentStr.contains("�")) {
-                            fileParseError = "Could not read the file encoding. Please save the CSV as UTF-8."
+                            fileParseError = "Please select a valid student list file."
                         } else {
                             val lines = contentStr.split(Regex("\r?\n")).filter { it.isNotBlank() }
                             
@@ -354,7 +361,7 @@ fun TeacherDashboardScreen(
                     } else if (parsedRows.isNotEmpty()) {
                         val classHeaders = listOf("class_name", "class", "section", "القسم")
                         val nameHeaders = listOf("student_name", "student", "name", "اسم التلميذ", "الاسم")
-                        val codeHeaders = listOf("student_code", "code", "الكود", "الرمز")
+                        val codeHeaders = listOf("student_code", "code", "parent_code", "الكود", "الرمز")
     
                         var classIdx = -1
                         var nameIdx = -1
@@ -403,12 +410,27 @@ fun TeacherDashboardScreen(
                     }
                 }
             } catch (e: Exception) {
-                notice = "Error reading file."
+                notice = "Please select a valid student list file."
+            }
+        }
+    }
+
+    val createTemplateLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        if (uri != null) {
+            try {
+                contentResolver.openOutputStream(uri)?.use { stream ->
+                    val templateData = "class_name,student_name,student_code\nClass A,Ahmed Ben Ali,MT-1001\nClass A,Sara Ben Amor,MT-1002\nClass B,Youssef Triki,MT-1003"
+                    stream.write(templateData.toByteArray(Charsets.UTF_8))
+                }
+                notice = "Template downloaded successfully."
+            } catch (e: Exception) {
+                notice = "Error downloading template."
             }
         }
     }
 
     val classes = students.map { it.className }.distinct()
+
     
     Scaffold(
         topBar = {
@@ -430,11 +452,17 @@ fun TeacherDashboardScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { csvLauncher.launch("*/*") }, modifier = Modifier.weight(1f)) {
                     Icon(Icons.AutoMirrored.Filled.List, contentDescription = null)
                     Spacer(Modifier.width(4.dp))
                     Text("Import Class")
+                }
+                FilledTonalButton(onClick = { createTemplateLauncher.launch("template.csv") }, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Download, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Download Template")
                 }
                 FilledTonalButton(onClick = { showAddDialog = true }, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Default.Add, contentDescription = null)
@@ -442,7 +470,7 @@ fun TeacherDashboardScreen(
                     Text("Add Student")
                 }
             }
-            
+
             if (notice != null) {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(16.dp).fillMaxWidth()) {
