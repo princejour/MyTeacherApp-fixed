@@ -165,9 +165,11 @@ fun TeacherDashboardScreen(
             try {
                 contentResolver.openInputStream(uri)?.use { stream ->
                     val bytes = stream.readBytes()
-                    
+                    val parsedRows = mutableListOf<List<String>>()
+                    var fileParseError = ""
+
                     val isZip = bytes.size >= 4 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte() && bytes[2] == 0x03.toByte() && bytes[3] == 0x04.toByte()
-                    
+
                     if (isZip) {
                         try {
                             val sharedStrings = mutableListOf<String>()
@@ -231,7 +233,6 @@ fun TeacherDashboardScreen(
                                 var cellType = ""
                                 var cellRef = ""
                                 var currentCellIndex = 0
-                                var added = 0
 
                                 while (eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
                                     when (eventType) {
@@ -280,108 +281,125 @@ fun TeacherDashboardScreen(
                                                 currentV = ""
                                                 cellType = ""
                                             } else if (parser.name == "row") {
-                                                if (currentRow.size >= 2) {
-                                                    val cName = currentRow[0].trim()
-                                                    val sName = currentRow[1].trim()
-                                                    val sCodeRaw = if (currentRow.size > 2) currentRow[2].trim() else ""
-                                                    
-                                                    if (!sCodeRaw.equals("student_code", ignoreCase = true) && !cName.equals("class_name", ignoreCase = true) && sName.isNotEmpty() && cName.isNotEmpty() && !sName.equals("student_name", ignoreCase = true)) {
-                                                        val sCode = if (sCodeRaw.isEmpty()) "MT-${(1000..9999).random()}" else sCodeRaw
-                                                        if (students.none { it.parentCode == sCode }) {
-                                                            students.add(Student(UUID.randomUUID().toString(), sName, cName, sCode))
-                                                            added++
-                                                        }
-                                                    }
-                                                }
+                                                parsedRows.add(currentRow)
                                             }
                                         }
                                     }
                                     eventType = parser.next()
                                 }
-                                
-                                if (added > 0) {
-                                    notice = "Successfully imported $added students."
-                                } else {
-                                    notice = "No valid students found in the selected file."
-                                }
                             } else {
-                                notice = "Invalid XLSX file structure."
+                                fileParseError = "Invalid XLSX file structure."
                             }
                         } catch (e: Exception) {
-                            notice = "Error parsing XLSX file."
+                            fileParseError = "Error parsing XLSX file."
                         }
-                        return@use
-                    }
-
-                    var content = ""
-                    var encodingError = false
-                    
-                    if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
-                        content = String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
-                    } else if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
-                        content = String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
-                    } else if (bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) {
-                        content = String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
                     } else {
-                        val utf8Str = String(bytes, Charsets.UTF_8)
-                        if (!utf8Str.contains("\uFFFD")) {
-                            content = utf8Str
+                        var contentStr = ""
+                        var encodingError = false
+                        
+                        if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
+                            contentStr = String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
+                        } else if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
+                            contentStr = String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+                        } else if (bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) {
+                            contentStr = String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
                         } else {
-                            try {
-                                val cp1256Str = String(bytes, java.nio.charset.Charset.forName("windows-1256"))
-                                if (cp1256Str.any { it in '\u0600'..'\u06FF' }) {
-                                    content = cp1256Str
-                                } else {
-                                    val isoStr = String(bytes, java.nio.charset.Charset.forName("ISO-8859-6"))
-                                    if (isoStr.any { it in '\u0600'..'\u06FF' }) {
-                                        content = isoStr
+                            val utf8Str = String(bytes, Charsets.UTF_8)
+                            if (!utf8Str.contains("�")) {
+                                contentStr = utf8Str
+                            } else {
+                                try {
+                                    val cp1256Str = String(bytes, java.nio.charset.Charset.forName("windows-1256"))
+                                    if (cp1256Str.any { it in '؀'..'ۿ' }) {
+                                        contentStr = cp1256Str
                                     } else {
-                                        encodingError = true
+                                        val isoStr = String(bytes, java.nio.charset.Charset.forName("ISO-8859-6"))
+                                        if (isoStr.any { it in '؀'..'ۿ' }) {
+                                            contentStr = isoStr
+                                        } else {
+                                            encodingError = true
+                                        }
                                     }
+                                } catch (e: Exception) {
+                                    encodingError = true
                                 }
-                            } catch (e: Exception) {
-                                encodingError = true
+                            }
+                        }
+
+                        if (encodingError || contentStr.contains("�")) {
+                            fileParseError = "Could not read the file encoding. Please save the CSV as UTF-8."
+                        } else {
+                            val lines = contentStr.split(Regex("\r?\n")).filter { it.isNotBlank() }
+                            
+                            val delimiters = listOf(",", ";", "	", "|")
+                            var bestDelimiter = ","
+                            var maxCols = 0
+                            
+                            for (delim in delimiters) {
+                                val sampleCols = lines.take(5).sumOf { it.split(delim).size }
+                                if (sampleCols > maxCols) {
+                                    maxCols = sampleCols
+                                    bestDelimiter = delim
+                                }
+                            }
+                            
+                            for (line in lines) {
+                                parsedRows.add(line.split(bestDelimiter).map { it.trim() })
                             }
                         }
                     }
 
-                    if (encodingError || content.contains("\uFFFD")) {
-                        notice = "Could not read the file encoding. Please save the CSV as UTF-8."
-                    } else {
-                        val lines = content.split(Regex("\\r?\\n"))
-                        var added = 0
-                        for (line in lines) {
-                            val cleanLine = line.trim()
-                            if (cleanLine.isEmpty()) continue
-                            
-                            val delimiter = when {
-                                cleanLine.contains("\t") -> "\t"
-                                cleanLine.contains(";") -> ";"
-                                else -> ","
+                    if (fileParseError.isNotEmpty()) {
+                        notice = fileParseError
+                    } else if (parsedRows.isNotEmpty()) {
+                        val classHeaders = listOf("class_name", "class", "section", "القسم")
+                        val nameHeaders = listOf("student_name", "student", "name", "اسم التلميذ", "الاسم")
+                        val codeHeaders = listOf("student_code", "code", "الكود", "الرمز")
+    
+                        var classIdx = -1
+                        var nameIdx = -1
+                        var codeIdx = -1
+    
+                        val firstRow = parsedRows[0].map { it.lowercase().trim() }
+                        val isHeader = firstRow.any { it in classHeaders || it in nameHeaders || it in codeHeaders }
+                        
+                        if (isHeader) {
+                            for ((i, cell) in firstRow.withIndex()) {
+                                if (cell in classHeaders) classIdx = i
+                                else if (cell in nameHeaders) nameIdx = i
+                                else if (cell in codeHeaders) codeIdx = i
                             }
-                            val parts = cleanLine.split(delimiter)
+                            parsedRows.removeAt(0)
+                        }
+    
+                        if (classIdx == -1) classIdx = 0
+                        if (nameIdx == -1) nameIdx = 1
+                        if (codeIdx == -1) codeIdx = 2
+    
+                        var added = 0
+                        for (row in parsedRows) {
+                            if (row.isEmpty() || row.all { it.isBlank() }) continue
                             
-                            if (parts.size >= 2) {
-                                val cName = parts[0].trim()
-                                val sName = parts[1].trim()
-                                val sCodeRaw = if (parts.size > 2) parts[2].trim() else ""
-                                
-                                if (sCodeRaw.equals("student_code", ignoreCase = true) || cName.equals("class_name", ignoreCase = true) || sName.equals("student_name", ignoreCase = true)) continue
-                                
-                                if (sName.isNotEmpty() && cName.isNotEmpty()) {
-                                    val sCode = if (sCodeRaw.isEmpty()) "MT-${(1000..9999).random()}" else sCodeRaw
-                                    if (students.none { it.parentCode == sCode }) {
-                                        students.add(Student(UUID.randomUUID().toString(), sName, cName, sCode))
-                                        added++
-                                    }
+                            val cName = if (classIdx < row.size && classIdx >= 0) row[classIdx].trim() else ""
+                            val sName = if (nameIdx < row.size && nameIdx >= 0) row[nameIdx].trim() else ""
+                            val sCodeRaw = if (codeIdx < row.size && codeIdx >= 0) row[codeIdx].trim() else ""
+                            
+                            if (sName.isNotEmpty() && cName.isNotEmpty()) {
+                                val sCode = if (sCodeRaw.isEmpty()) "MT-${(1000..9999).random()}" else sCodeRaw
+                                if (students.none { it.parentCode == sCode }) {
+                                    students.add(Student(UUID.randomUUID().toString(), sName, cName, sCode))
+                                    added++
                                 }
                             }
                         }
+    
                         if (added > 0) {
                             notice = "Successfully imported $added students."
                         } else {
-                            notice = "No valid students found in the selected file."
+                            notice = "Please select a valid student list file."
                         }
+                    } else {
+                        notice = "Please select a valid student list file."
                     }
                 }
             } catch (e: Exception) {
