@@ -22,10 +22,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import java.util.UUID
+import java.io.ByteArrayInputStream
+import java.nio.charset.Charset
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
+import java.util.zip.ZipInputStream
+import org.xmlpull.v1.XmlPullParser
+import org.xmlpull.v1.XmlPullParserFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -160,242 +165,13 @@ fun TeacherDashboardScreen(
     val context = LocalContext.current
     val contentResolver = context.contentResolver
 
-
     val csvLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) {
             try {
-                contentResolver.openInputStream(uri)?.use { stream ->
-                    val bytes = stream.readBytes()
-                    val parsedRows = mutableListOf<List<String>>()
-                    var fileParseError = ""
-
-                    val isZip = bytes.size >= 4 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte() && bytes[2] == 0x03.toByte() && bytes[3] == 0x04.toByte()
-
-                    if (isZip) {
-                        try {
-                            val sharedStrings = mutableListOf<String>()
-                            var sheetXml: ByteArray? = null
-                            var sharedStringsXml: ByteArray? = null
-
-                            java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(bytes)).use { zis ->
-                                var entry = zis.nextEntry
-                                while (entry != null) {
-                                    if (entry.name == "xl/sharedStrings.xml") {
-                                        sharedStringsXml = zis.readBytes()
-                                    } else if (entry.name.startsWith("xl/worksheets/sheet") && entry.name.endsWith(".xml") && sheetXml == null) {
-                                        sheetXml = zis.readBytes()
-                                    }
-                                    zis.closeEntry()
-                                    entry = zis.nextEntry
-                                }
-                            }
-
-                            if (sharedStringsXml != null) {
-                                val factory = org.xmlpull.v1.XmlPullParserFactory.newInstance()
-                                val parser = factory.newPullParser()
-                                parser.setInput(java.io.ByteArrayInputStream(sharedStringsXml), "UTF-8")
-                                
-                                var eventType = parser.eventType
-                                var currentText = ""
-                                var inSi = false
-                                var inT = false
-                                while (eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
-                                    when (eventType) {
-                                        org.xmlpull.v1.XmlPullParser.START_TAG -> {
-                                            if (parser.name == "si") {
-                                                inSi = true
-                                                currentText = ""
-                                            } else if (parser.name == "t" && inSi) {
-                                                inT = true
-                                            }
-                                        }
-                                        org.xmlpull.v1.XmlPullParser.TEXT -> {
-                                            if (inT) {
-                                                currentText += parser.text
-                                            }
-                                        }
-                                        org.xmlpull.v1.XmlPullParser.END_TAG -> {
-                                            if (parser.name == "t") {
-                                                inT = false
-                                            } else if (parser.name == "si") {
-                                                inSi = false
-                                                sharedStrings.add(currentText)
-                                            }
-                                        }
-                                    }
-                                    eventType = parser.next()
-                                }
-                            }
-
-                            if (sheetXml != null) {
-                                val factory = org.xmlpull.v1.XmlPullParserFactory.newInstance()
-                                val parser = factory.newPullParser()
-                                parser.setInput(java.io.ByteArrayInputStream(sheetXml), "UTF-8")
-                                
-                                var eventType = parser.eventType
-                                var currentRow = mutableListOf<String>()
-                                var inV = false
-                                var currentV = ""
-                                var cellType = ""
-                                var cellRef = ""
-                                var currentCellIndex = 0
-
-                                while (eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
-                                    when (eventType) {
-                                        org.xmlpull.v1.XmlPullParser.START_TAG -> {
-                                            if (parser.name == "row") {
-                                                currentRow = mutableListOf()
-                                                currentCellIndex = 0
-                                            } else if (parser.name == "c") {
-                                                cellType = parser.getAttributeValue(null, "t") ?: ""
-                                                cellRef = parser.getAttributeValue(null, "r") ?: ""
-                                                currentV = ""
-                                                inV = false
-                                                
-                                                val colStr = cellRef.takeWhile { it.isLetter() }
-                                                var colIdx = 0
-                                                for (c in colStr) {
-                                                    colIdx = colIdx * 26 + (c - 'A' + 1)
-                                                }
-                                                colIdx -= 1
-                                                
-                                                while (currentCellIndex < colIdx) {
-                                                    currentRow.add("")
-                                                    currentCellIndex++
-                                                }
-                                            } else if (parser.name == "v" || parser.name == "t" || parser.name == "is") {
-                                                inV = true
-                                            }
-                                        }
-                                        org.xmlpull.v1.XmlPullParser.TEXT -> {
-                                            if (inV) {
-                                                currentV += parser.text
-                                            }
-                                        }
-                                        org.xmlpull.v1.XmlPullParser.END_TAG -> {
-                                            if (parser.name == "v" || parser.name == "t" || parser.name == "is") {
-                                                inV = false
-                                            } else if (parser.name == "c") {
-                                                var value = currentV
-                                                if (cellType == "s") {
-                                                    val index = value.toIntOrNull()
-                                                    if (index != null && index >= 0 && index < sharedStrings.size) {
-                                                        value = sharedStrings[index]
-                                                    }
-                                                }
-                                                currentRow.add(value)
-                                                currentCellIndex++
-                                                currentV = ""
-                                                cellType = ""
-                                            } else if (parser.name == "row") {
-                                                parsedRows.add(currentRow)
-                                            }
-                                        }
-                                    }
-                                    eventType = parser.next()
-                                }
-                            } else {
-                                fileParseError = "Please select a valid student list file."
-                            }
-                        } catch (e: Exception) {
-                            fileParseError = "Please select a valid student list file."
-                        }
-                    } else {
-                        var contentStr = ""
-                        
-                        if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
-                            contentStr = String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
-                        } else if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
-                            contentStr = String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
-                        } else if (bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) {
-                            contentStr = String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
-                        } else {
-                            val encodings = listOf("UTF-8", "windows-1256", "ISO-8859-6", "windows-1252", "UTF-16")
-                            for (enc in encodings) {
-                                try {
-                                    val str = String(bytes, java.nio.charset.Charset.forName(enc))
-                                    if (!str.contains("\uFFFD")) {
-                                        contentStr = str
-                                        break
-                                    }
-                                } catch (e: Exception) {}
-                            }
-                            if (contentStr.isEmpty()) {
-                                contentStr = String(bytes, Charsets.UTF_8)
-                            }
-                        }
-
-                        val lines = contentStr.split(Regex("\\r?\\n")).filter { it.isNotBlank() }
-                        
-                        val delimiters = listOf(",", ";", "\t", "|")
-                        var bestDelimiter = ","
-                        var maxCols = 0
-                        
-                        for (delim in delimiters) {
-                            val sampleCols = lines.take(5).sumOf { it.split(delim).size }
-                            if (sampleCols > maxCols) {
-                                maxCols = sampleCols
-                                bestDelimiter = delim
-                            }
-                        }
-                        
-                        for (line in lines) {
-                            parsedRows.add(line.split(bestDelimiter).map { it.trim() })
-                        }
-                    }
-
-                    if (fileParseError.isNotEmpty()) {
-                        notice = fileParseError
-                    } else if (parsedRows.isNotEmpty()) {
-                        var classIdx = -1
-                        var nameIdx = -1
-                        var codeIdx = -1
-    
-                        val firstRow = parsedRows[0].map { it.lowercase().trim() }
-                        val isHeader = firstRow.any { it.contains("class") || it.contains("name") || it.contains("code") || it.contains("قسم") || it.contains("اسم") || it.contains("رمز") || it.contains("كود") }
-                        
-                        if (isHeader) {
-                            for ((i, cell) in firstRow.withIndex()) {
-                                if (cell.contains("class") || cell.contains("قسم") || cell.contains("section")) classIdx = i
-                                else if (cell.contains("name") || cell.contains("student") || cell.contains("اسم") || cell.contains("تلميذ")) nameIdx = i
-                                else if (cell.contains("code") || cell.contains("رمز") || cell.contains("كود")) codeIdx = i
-                            }
-                            parsedRows.removeAt(0)
-                        }
-    
-                        if (classIdx == -1) classIdx = 0
-                        if (nameIdx == -1) nameIdx = 1
-                        if (codeIdx == -1) codeIdx = 2
-    
-                        var added = 0
-                        for (row in parsedRows) {
-                            if (row.isEmpty() || row.all { it.isBlank() }) continue
-                            
-                            val rowStr = row.joinToString("")
-                            if (rowStr.contains("xl/worksheets") || rowStr.contains("[Content_Types]") || rowStr.contains("\uFFFD")) continue
-                            
-                            val cName = if (classIdx < row.size && classIdx >= 0) row[classIdx].trim() else ""
-                            val sName = if (nameIdx < row.size && nameIdx >= 0) row[nameIdx].trim() else ""
-                            val sCodeRaw = if (codeIdx < row.size && codeIdx >= 0) row[codeIdx].trim() else ""
-                            
-                            if (sName.isNotEmpty() && cName.isNotEmpty()) {
-                                val sCode = if (sCodeRaw.isEmpty()) "MT-${(1000..9999).random()}" else sCodeRaw
-                                if (students.none { it.parentCode == sCode }) {
-                                    students.add(Student(java.util.UUID.randomUUID().toString(), sName, cName, sCode))
-                                    added++
-                                }
-                            }
-                        }
-    
-                        if (added > 0) {
-                            notice = "Successfully imported $added students."
-                        } else {
-                            notice = "Please select a valid student list file."
-                        }
-                    } else {
-                        notice = "Please select a valid student list file."
-                    }
-                }
+                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
+                val rows = parseStudentRows(bytes)
+                val added = importStudentRows(rows, students)
+                notice = if (added > 0) "Successfully imported $added students." else "Please select a valid student list file."
             } catch (e: Exception) {
                 notice = "Please select a valid student list file."
             }
@@ -404,7 +180,6 @@ fun TeacherDashboardScreen(
 
     val classes = students.map { it.className }.distinct()
 
-    
     Scaffold(
         topBar = {
             TopAppBar(
@@ -425,7 +200,6 @@ fun TeacherDashboardScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { csvLauncher.launch("*/*") }, modifier = Modifier.weight(1f)) {
                     Icon(Icons.AutoMirrored.Filled.List, contentDescription = null)
@@ -465,7 +239,7 @@ fun TeacherDashboardScreen(
                         )
                     }
                 }
-                
+
                 if (selectedClass != null) {
                     Text("Students", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     val classStudents = students.filter { it.className == selectedClass }
@@ -473,12 +247,10 @@ fun TeacherDashboardScreen(
                         val studentMessages = messages.filter { it.studentId == student.id }
                         val messageCount = studentMessages.size
                         val lastMessageDate = studentMessages.firstOrNull()?.date ?: "None"
-                        
+
                         Card(
                             onClick = { onStudentClick(student) },
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant
-                            ),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(modifier = Modifier.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -503,7 +275,7 @@ fun TeacherDashboardScreen(
         var newClass by remember { mutableStateOf("") }
         var newCode by remember { mutableStateOf("") }
         var addError by remember { mutableStateOf<String?>(null) }
-        
+
         AlertDialog(
             onDismissRequest = { showAddDialog = false },
             title = { Text("Add New Student") },
@@ -525,11 +297,11 @@ fun TeacherDashboardScreen(
                     if (newName.isBlank() || newClass.isBlank()) {
                         addError = "Name and class are required"
                     } else {
-                        val finalCode = if (newCode.isBlank()) "MT-${(1000..9999).random()}" else newCode
+                        val finalCode = if (newCode.isBlank()) nextStudentCode(students, 0) else newCode.trim()
                         if (students.any { it.parentCode == finalCode }) {
                             addError = "Code is already in use"
                         } else {
-                            students.add(Student(UUID.randomUUID().toString(), newName.trim(), newClass.trim(), finalCode.trim()))
+                            students.add(Student(UUID.randomUUID().toString(), newName.trim(), newClass.trim(), finalCode))
                             showAddDialog = false
                             notice = "Successfully added"
                         }
@@ -550,7 +322,6 @@ fun TeacherStudentDetailsScreen(
 ) {
     var showSendDialog by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
-    
     val studentMessages = messages.filter { it.studentId == student.id }
 
     Scaffold(
@@ -565,16 +336,9 @@ fun TeacherStudentDetailsScreen(
             )
         }
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            // Student Details Header
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -584,70 +348,38 @@ fun TeacherStudentDetailsScreen(
                     Text("Code: ${student.parentCode}", style = MaterialTheme.typography.bodyLarge)
                 }
             }
-            
+
             if (notice != null) {
-                Text(
-                    text = notice.orEmpty(),
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
+                Text(text = notice.orEmpty(), color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 16.dp))
                 Spacer(Modifier.height(8.dp))
             }
 
-            // Actions
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.Center
-            ) {
-                Button(
-                    onClick = { showSendDialog = true },
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(16.dp)
-                ) {
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.Center) {
+                Button(onClick = { showSendDialog = true }, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(16.dp)) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text("Send New Message")
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                "Message History",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
+            Text("Message History", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp))
             Spacer(modifier = Modifier.height(8.dp))
-            
+
             if (studentMessages.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
+                Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                     Text("No messages sent yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
                 LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
+                    modifier = Modifier.fillMaxWidth().weight(1f),
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(studentMessages) { msg ->
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                        ) {
+                        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                             Column(modifier = Modifier.padding(16.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text(msg.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                                     Text(msg.date, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
@@ -665,7 +397,7 @@ fun TeacherStudentDetailsScreen(
         var title by rememberSaveable { mutableStateOf("") }
         var body by rememberSaveable { mutableStateOf("") }
         var error by remember { mutableStateOf<String?>(null) }
-        
+
         AlertDialog(
             onDismissRequest = { showSendDialog = false },
             title = { Text("New Message to ${student.name}") },
@@ -696,4 +428,276 @@ fun TeacherStudentDetailsScreen(
             dismissButton = { TextButton(onClick = { showSendDialog = false }) { Text("Cancel") } }
         )
     }
+}
+
+private fun parseStudentRows(bytes: ByteArray): List<List<String>> {
+    if (bytes.isEmpty()) return emptyList()
+    return if (bytes.size >= 2 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte()) {
+        parseXlsxRows(bytes)
+    } else {
+        parseTextRows(bytes)
+    }
+}
+
+private fun parseXlsxRows(bytes: ByteArray): List<List<String>> {
+    val entries = linkedMapOf<String, ByteArray>()
+    ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
+        var entry = zip.nextEntry
+        while (entry != null) {
+            if (!entry.isDirectory) entries[entry.name] = zip.readBytes()
+            zip.closeEntry()
+            entry = zip.nextEntry
+        }
+    }
+
+    val sheetName = entries.keys
+        .filter { it.startsWith("xl/worksheets/sheet") && it.endsWith(".xml") }
+        .sortedBy { Regex("sheet(\\d+)\\.xml").find(it)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: Int.MAX_VALUE }
+        .firstOrNull() ?: return emptyList()
+
+    val sharedStrings = entries["xl/sharedStrings.xml"]?.let { parseSharedStrings(it) }.orEmpty()
+    return parseWorksheet(entries[sheetName] ?: return emptyList(), sharedStrings)
+}
+
+private fun parseSharedStrings(bytes: ByteArray): List<String> {
+    val result = mutableListOf<String>()
+    val parser = XmlPullParserFactory.newInstance().newPullParser()
+    parser.setInput(ByteArrayInputStream(bytes), "UTF-8")
+
+    var event = parser.eventType
+    var inSi = false
+    var inText = false
+    var builder = StringBuilder()
+
+    while (event != XmlPullParser.END_DOCUMENT) {
+        val tag = parser.name?.substringAfter(':').orEmpty()
+        when (event) {
+            XmlPullParser.START_TAG -> when (tag) {
+                "si" -> { inSi = true; builder = StringBuilder() }
+                "t" -> if (inSi) inText = true
+            }
+            XmlPullParser.TEXT -> if (inSi && inText) builder.append(parser.text)
+            XmlPullParser.END_TAG -> when (tag) {
+                "t" -> inText = false
+                "si" -> { result.add(builder.toString()); inSi = false }
+            }
+        }
+        event = parser.next()
+    }
+    return result
+}
+
+private fun parseWorksheet(bytes: ByteArray, sharedStrings: List<String>): List<List<String>> {
+    val rows = mutableListOf<List<String>>()
+    val parser = XmlPullParserFactory.newInstance().newPullParser()
+    parser.setInput(ByteArrayInputStream(bytes), "UTF-8")
+
+    var event = parser.eventType
+    var currentRow = mutableListOf<String>()
+    var currentText = StringBuilder()
+    var currentCellType = ""
+    var currentCellIndex = 0
+    var inCell = false
+    var inValue = false
+
+    while (event != XmlPullParser.END_DOCUMENT) {
+        val tag = parser.name?.substringAfter(':').orEmpty()
+        when (event) {
+            XmlPullParser.START_TAG -> when (tag) {
+                "row" -> { currentRow = mutableListOf(); currentCellIndex = 0 }
+                "c" -> {
+                    inCell = true
+                    currentText = StringBuilder()
+                    currentCellType = parser.getAttributeValue(null, "t") ?: ""
+                    val colIndex = excelColumnIndex(parser.getAttributeValue(null, "r").orEmpty())
+                    if (colIndex >= 0) {
+                        while (currentCellIndex < colIndex) {
+                            currentRow.add("")
+                            currentCellIndex++
+                        }
+                    }
+                }
+                "v", "t" -> if (inCell) inValue = true
+            }
+            XmlPullParser.TEXT -> if (inCell && inValue) currentText.append(parser.text)
+            XmlPullParser.END_TAG -> when (tag) {
+                "v", "t" -> inValue = false
+                "c" -> {
+                    var value = currentText.toString()
+                    if (currentCellType == "s") value = value.toIntOrNull()?.let { sharedStrings.getOrNull(it) }.orEmpty()
+                    currentRow.add(value.trim())
+                    currentCellIndex++
+                    inCell = false
+                    inValue = false
+                    currentText = StringBuilder()
+                    currentCellType = ""
+                }
+                "row" -> if (currentRow.any { it.isNotBlank() }) rows.add(currentRow)
+            }
+        }
+        event = parser.next()
+    }
+
+    return rows
+}
+
+private fun excelColumnIndex(ref: String): Int {
+    val letters = ref.takeWhile { it.isLetter() }.uppercase(Locale.ROOT)
+    if (letters.isBlank()) return -1
+    var value = 0
+    for (letter in letters) value = value * 26 + (letter - 'A' + 1)
+    return value - 1
+}
+
+private fun parseTextRows(bytes: ByteArray): List<List<String>> {
+    val text = decodeText(bytes)
+    if (text.isBlank() || isCorruptedText(text)) return emptyList()
+
+    val lines = text
+        .replace("\r\n", "\n")
+        .replace('\r', '\n')
+        .split('\n')
+        .map { it.trim().trim('\uFEFF') }
+        .filter { it.isNotBlank() }
+
+    if (lines.isEmpty()) return emptyList()
+
+    val delimiter = listOf(',', ';', '\t', '|').maxByOrNull { delimiter ->
+        lines.take(10).sumOf { splitLine(it, delimiter).size }
+    } ?: ','
+
+    return lines.map { splitLine(it, delimiter).map { cell -> cell.trim().trim('\uFEFF') } }
+}
+
+private fun decodeText(bytes: ByteArray): String {
+    if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
+        return String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
+    }
+    if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
+        return String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+    }
+    if (bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) {
+        return String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+    }
+
+    val charsets = listOf(
+        Charsets.UTF_8,
+        Charset.forName("windows-1256"),
+        Charset.forName("ISO-8859-6"),
+        Charset.forName("windows-1252"),
+        Charsets.UTF_16LE,
+        Charsets.UTF_16BE
+    )
+    return charsets.map { String(bytes, it) }.maxByOrNull { scoreDecodedText(it) }.orEmpty()
+}
+
+private fun scoreDecodedText(text: String): Int {
+    if (text.isBlank()) return -10000
+    if (text.contains("xl/worksheets", ignoreCase = true) || text.contains("[Content_Types]", ignoreCase = true)) return -10000
+    val replacement = text.count { it == '�' }
+    val tableMarks = text.count { it == ',' || it == ';' || it == '\t' || it == '|' || it == '\n' }
+    val useful = text.count { it.isLetterOrDigit() || !it.isISOControl() }
+    return useful + tableMarks * 10 - replacement * 500
+}
+
+private fun isCorruptedText(text: String): Boolean {
+    return text.contains('�') || text.contains("xl/worksheets", ignoreCase = true) || text.contains("[Content_Types]", ignoreCase = true)
+}
+
+private fun splitLine(line: String, delimiter: Char): List<String> {
+    val cells = mutableListOf<String>()
+    val current = StringBuilder()
+    var inQuotes = false
+    var i = 0
+    while (i < line.length) {
+        val ch = line[i]
+        if (ch == '"') {
+            if (inQuotes && i + 1 < line.length && line[i + 1] == '"') {
+                current.append('"')
+                i++
+            } else {
+                inQuotes = !inQuotes
+            }
+        } else if (ch == delimiter && !inQuotes) {
+            cells.add(current.toString())
+            current.clear()
+        } else {
+            current.append(ch)
+        }
+        i++
+    }
+    cells.add(current.toString())
+    return cells
+}
+
+private fun importStudentRows(inputRows: List<List<String>>, students: MutableList<Student>): Int {
+    val rows = inputRows.map { row -> row.map { it.trim() } }.filter { row -> row.any { it.isNotBlank() } }
+    if (rows.isEmpty()) return 0
+
+    var dataRows = rows
+    var classIndex = 0
+    var nameIndex = if (rows.first().size >= 2) 1 else 0
+    var codeIndex = 2
+
+    val firstRow = rows.first().map { normalizeHeader(it) }
+    val classHeaderIndex = firstRow.indexOfFirst { isClassHeader(it) }
+    val nameHeaderIndex = firstRow.indexOfFirst { isNameHeader(it) }
+    val codeHeaderIndex = firstRow.indexOfFirst { isCodeHeader(it) }
+    val hasHeader = classHeaderIndex >= 0 || nameHeaderIndex >= 0 || codeHeaderIndex >= 0
+
+    if (hasHeader) {
+        if (classHeaderIndex >= 0) classIndex = classHeaderIndex
+        if (nameHeaderIndex >= 0) nameIndex = nameHeaderIndex
+        if (codeHeaderIndex >= 0) codeIndex = codeHeaderIndex
+        dataRows = rows.drop(1)
+    } else {
+        when (rows.first().size) {
+            1 -> { classIndex = -1; nameIndex = 0; codeIndex = -1 }
+            2 -> { classIndex = 0; nameIndex = 1; codeIndex = -1 }
+            else -> { classIndex = 0; nameIndex = 1; codeIndex = 2 }
+        }
+    }
+
+    var added = 0
+    for (row in dataRows) {
+        val className = if (classIndex >= 0) row.getOrNull(classIndex).orEmpty().trim() else "Imported Class"
+        val studentName = row.getOrNull(nameIndex).orEmpty().trim()
+        val rawCode = if (codeIndex >= 0) row.getOrNull(codeIndex).orEmpty().trim() else ""
+
+        if (className.isBlank() || studentName.isBlank()) continue
+        if (isCorruptedText(className) || isCorruptedText(studentName) || isCorruptedText(rawCode)) continue
+
+        val code = if (rawCode.isBlank()) nextStudentCode(students, added) else rawCode
+        if (students.none { it.parentCode == code }) {
+            students.add(Student(UUID.randomUUID().toString(), studentName, className, code))
+            added++
+        }
+    }
+    return added
+}
+
+private fun normalizeHeader(value: String): String {
+    return value.trim().trim('\uFEFF').lowercase(Locale.ROOT).replace(" ", "_").replace("-", "_")
+}
+
+private fun isClassHeader(value: String): Boolean {
+    return value in setOf("class", "class_name", "section", "grade", "level", "classe", "sınıf", "класс", "班级", "القسم", "الفصل", "المستوى") || value.contains("قسم")
+}
+
+private fun isNameHeader(value: String): Boolean {
+    return value in setOf("name", "student", "student_name", "full_name", "pupil", "nom", "élève", "öğrenci", "имя", "姓名", "الاسم", "الأسماء", "اسم", "اسم_التلميذ", "الاسم_واللقب") || value.contains("اسم") || value.contains("أسماء") || value.contains("اسماء")
+}
+
+private fun isCodeHeader(value: String): Boolean {
+    return value in setOf("code", "student_code", "parent_code", "id", "identifier", "الكود", "الرمز", "المعرف", "رقم") || value.contains("code") || value.contains("كود") || value.contains("رمز")
+}
+
+private fun nextStudentCode(students: List<Student>, offset: Int): String {
+    var number = 1001 + students.size + offset
+    var code = "MT-$number"
+    while (students.any { it.parentCode == code }) {
+        number++
+        code = "MT-$number"
+    }
+    return code
 }
