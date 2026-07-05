@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -26,9 +27,9 @@ fun ParentAccessScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("دخول الولي") },
+                title = { Text("Parent Login") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
                 }
             )
         }
@@ -43,7 +44,7 @@ fun ParentAccessScreen(
             OutlinedTextField(
                 value = code,
                 onValueChange = { code = it },
-                label = { Text("كود التلميذ") },
+                label = { Text("Student Code") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
@@ -59,12 +60,12 @@ fun ParentAccessScreen(
                         error = null
                         onOpenInbox(s)
                     } else {
-                        error = "كود غير صحيح"
+                        error = "Invalid code"
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
                 contentPadding = PaddingValues(16.dp)
-            ) { Text("دخول") }
+            ) { Text("Login") }
         }
     }
 }
@@ -90,8 +91,8 @@ fun ParentInboxScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("رسائل \${student.name}") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") } }
+                title = { Text("${student.name}'s Messages") },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }
             )
         }
     ) { padding ->
@@ -100,7 +101,7 @@ fun ParentInboxScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(16.dp))
-                    Text("لا توجد رسائل حالياً.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("No messages currently.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         } else {
