@@ -164,14 +164,53 @@ fun TeacherDashboardScreen(
         if (uri != null) {
             try {
                 contentResolver.openInputStream(uri)?.use { stream ->
-                    stream.bufferedReader(Charsets.UTF_8).use { reader ->
-                        val lines = reader.readLines()
+                    val bytes = stream.readBytes()
+                    var content = ""
+                    var encodingError = false
+                    
+                    if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
+                        content = String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
+                    } else if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
+                        content = String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+                    } else if (bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) {
+                        content = String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+                    } else {
+                        val utf8Str = String(bytes, Charsets.UTF_8)
+                        if (!utf8Str.contains("\uFFFD")) {
+                            content = utf8Str
+                        } else {
+                            try {
+                                val cp1256Str = String(bytes, java.nio.charset.Charset.forName("windows-1256"))
+                                if (cp1256Str.any { it in '\u0600'..'\u06FF' }) {
+                                    content = cp1256Str
+                                } else {
+                                    val isoStr = String(bytes, java.nio.charset.Charset.forName("ISO-8859-6"))
+                                    if (isoStr.any { it in '\u0600'..'\u06FF' }) {
+                                        content = isoStr
+                                    } else {
+                                        encodingError = true
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                encodingError = true
+                            }
+                        }
+                    }
+
+                    if (encodingError || content.contains("\uFFFD")) {
+                        notice = "Could not read the file encoding. Please save the CSV as UTF-8."
+                    } else {
+                        val lines = content.split(Regex("\\r?\\n"))
                         var added = 0
                         for (line in lines) {
-                            val cleanLine = line.trim().removePrefix("\uFEFF")
+                            val cleanLine = line.trim()
                             if (cleanLine.isEmpty()) continue
                             
-                            val delimiter = if (cleanLine.contains(";")) ";" else ","
+                            val delimiter = when {
+                                cleanLine.contains("\t") -> "\t"
+                                cleanLine.contains(";") -> ";"
+                                else -> ","
+                            }
                             val parts = cleanLine.split(delimiter)
                             
                             if (parts.size >= 3) {
