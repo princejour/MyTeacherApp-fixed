@@ -164,15 +164,18 @@ fun TeacherDashboardScreen(
         if (uri != null) {
             try {
                 contentResolver.openInputStream(uri)?.use { stream ->
-                    stream.bufferedReader().use { reader ->
+                    stream.bufferedReader(Charsets.UTF_8).use { reader ->
                         val lines = reader.readLines()
                         var added = 0
-                        for (i in 1 until lines.size) {
-                            val parts = lines[i].split(",")
+                        for (line in lines) {
+                            if (line.trim().isEmpty()) continue
+                            val parts = line.split(",")
                             if (parts.size >= 3) {
                                 val cName = parts[0].trim()
                                 val sName = parts[1].trim()
                                 val sCode = parts[2].trim()
+                                
+                                if (sCode.equals("student_code", ignoreCase = true)) continue
                                 
                                 if (sName.isNotEmpty() && cName.isNotEmpty() && sCode.isNotEmpty()) {
                                     if (students.none { it.parentCode == sCode }) {
