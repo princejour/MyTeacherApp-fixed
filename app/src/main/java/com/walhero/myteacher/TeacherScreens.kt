@@ -302,7 +302,6 @@ fun TeacherDashboardScreen(
                         }
                     } else {
                         var contentStr = ""
-                        var encodingError = false
                         
                         if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
                             contentStr = String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
@@ -311,48 +310,37 @@ fun TeacherDashboardScreen(
                         } else if (bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) {
                             contentStr = String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
                         } else {
-                            val utf8Str = String(bytes, Charsets.UTF_8)
-                            if (!utf8Str.contains("�")) {
-                                contentStr = utf8Str
-                            } else {
+                            val encodings = listOf("UTF-8", "windows-1256", "ISO-8859-6", "windows-1252", "UTF-16")
+                            for (enc in encodings) {
                                 try {
-                                    val cp1256Str = String(bytes, java.nio.charset.Charset.forName("windows-1256"))
-                                    if (cp1256Str.any { it in '؀'..'ۿ' }) {
-                                        contentStr = cp1256Str
-                                    } else {
-                                        val isoStr = String(bytes, java.nio.charset.Charset.forName("ISO-8859-6"))
-                                        if (isoStr.any { it in '؀'..'ۿ' }) {
-                                            contentStr = isoStr
-                                        } else {
-                                            encodingError = true
-                                        }
+                                    val str = String(bytes, java.nio.charset.Charset.forName(enc))
+                                    if (!str.contains("�")) {
+                                        contentStr = str
+                                        break
                                     }
-                                } catch (e: Exception) {
-                                    encodingError = true
-                                }
+                                } catch (e: Exception) {}
+                            }
+                            if (contentStr.isEmpty()) {
+                                contentStr = String(bytes, Charsets.UTF_8)
                             }
                         }
 
-                        if (encodingError || contentStr.contains("�")) {
-                            fileParseError = "Please select a valid student list file."
-                        } else {
-                            val lines = contentStr.split(Regex("\r?\n")).filter { it.isNotBlank() }
-                            
-                            val delimiters = listOf(",", ";", "	", "|")
-                            var bestDelimiter = ","
-                            var maxCols = 0
-                            
-                            for (delim in delimiters) {
-                                val sampleCols = lines.take(5).sumOf { it.split(delim).size }
-                                if (sampleCols > maxCols) {
-                                    maxCols = sampleCols
-                                    bestDelimiter = delim
-                                }
+                        val lines = contentStr.split(Regex("\r?\n")).filter { it.isNotBlank() }
+                        
+                        val delimiters = listOf(",", ";", "	", "|")
+                        var bestDelimiter = ","
+                        var maxCols = 0
+                        
+                        for (delim in delimiters) {
+                            val sampleCols = lines.take(5).sumOf { it.split(delim).size }
+                            if (sampleCols > maxCols) {
+                                maxCols = sampleCols
+                                bestDelimiter = delim
                             }
-                            
-                            for (line in lines) {
-                                parsedRows.add(line.split(bestDelimiter).map { it.trim() })
-                            }
+                        }
+                        
+                        for (line in lines) {
+                            parsedRows.add(line.split(bestDelimiter).map { it.trim() })
                         }
                     }
 
@@ -386,6 +374,9 @@ fun TeacherDashboardScreen(
                         var added = 0
                         for (row in parsedRows) {
                             if (row.isEmpty() || row.all { it.isBlank() }) continue
+                            
+                            val rowStr = row.joinToString("")
+                            if (rowStr.contains("xl/worksheets") || rowStr.contains("[Content_Types]") || rowStr.contains("�")) continue
                             
                             val cName = if (classIdx < row.size && classIdx >= 0) row[classIdx].trim() else ""
                             val sName = if (nameIdx < row.size && nameIdx >= 0) row[nameIdx].trim() else ""
