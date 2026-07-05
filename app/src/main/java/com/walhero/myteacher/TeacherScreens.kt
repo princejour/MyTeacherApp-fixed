@@ -165,6 +165,154 @@ fun TeacherDashboardScreen(
             try {
                 contentResolver.openInputStream(uri)?.use { stream ->
                     val bytes = stream.readBytes()
+                    
+                    val isZip = bytes.size >= 4 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte() && bytes[2] == 0x03.toByte() && bytes[3] == 0x04.toByte()
+                    
+                    if (isZip) {
+                        try {
+                            val sharedStrings = mutableListOf<String>()
+                            var sheetXml: ByteArray? = null
+                            var sharedStringsXml: ByteArray? = null
+
+                            java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(bytes)).use { zis ->
+                                var entry = zis.nextEntry
+                                while (entry != null) {
+                                    if (entry.name == "xl/sharedStrings.xml") {
+                                        sharedStringsXml = zis.readBytes()
+                                    } else if (entry.name == "xl/worksheets/sheet1.xml" || entry.name == "xl/worksheets/sheet.xml") {
+                                        sheetXml = zis.readBytes()
+                                    }
+                                    zis.closeEntry()
+                                    entry = zis.nextEntry
+                                }
+                            }
+
+                            if (sharedStringsXml != null) {
+                                val factory = org.xmlpull.v1.XmlPullParserFactory.newInstance()
+                                val parser = factory.newPullParser()
+                                parser.setInput(java.io.ByteArrayInputStream(sharedStringsXml), "UTF-8")
+                                
+                                var eventType = parser.eventType
+                                var currentText = ""
+                                var inT = false
+                                while (eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                                    when (eventType) {
+                                        org.xmlpull.v1.XmlPullParser.START_TAG -> {
+                                            if (parser.name == "t") {
+                                                inT = true
+                                                currentText = ""
+                                            }
+                                        }
+                                        org.xmlpull.v1.XmlPullParser.TEXT -> {
+                                            if (inT) {
+                                                currentText += parser.text
+                                            }
+                                        }
+                                        org.xmlpull.v1.XmlPullParser.END_TAG -> {
+                                            if (parser.name == "t") {
+                                                inT = false
+                                                sharedStrings.add(currentText)
+                                            }
+                                        }
+                                    }
+                                    eventType = parser.next()
+                                }
+                            }
+
+                            if (sheetXml != null) {
+                                val factory = org.xmlpull.v1.XmlPullParserFactory.newInstance()
+                                val parser = factory.newPullParser()
+                                parser.setInput(java.io.ByteArrayInputStream(sheetXml), "UTF-8")
+                                
+                                var eventType = parser.eventType
+                                var currentRow = mutableListOf<String>()
+                                var inV = false
+                                var currentV = ""
+                                var cellType = ""
+                                var cellRef = ""
+                                var currentCellIndex = 0
+                                var added = 0
+
+                                while (eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                                    when (eventType) {
+                                        org.xmlpull.v1.XmlPullParser.START_TAG -> {
+                                            if (parser.name == "row") {
+                                                currentRow = mutableListOf()
+                                                currentCellIndex = 0
+                                            } else if (parser.name == "c") {
+                                                cellType = parser.getAttributeValue(null, "t") ?: ""
+                                                cellRef = parser.getAttributeValue(null, "r") ?: ""
+                                                
+                                                val colStr = cellRef.takeWhile { it.isLetter() }
+                                                var colIdx = 0
+                                                for (c in colStr) {
+                                                    colIdx = colIdx * 26 + (c - 'A' + 1)
+                                                }
+                                                colIdx -= 1
+                                                
+                                                while (currentCellIndex < colIdx) {
+                                                    currentRow.add("")
+                                                    currentCellIndex++
+                                                }
+                                            } else if (parser.name == "v" || parser.name == "t" || parser.name == "is") {
+                                                inV = true
+                                                currentV = ""
+                                            }
+                                        }
+                                        org.xmlpull.v1.XmlPullParser.TEXT -> {
+                                            if (inV) {
+                                                currentV += parser.text
+                                            }
+                                        }
+                                        org.xmlpull.v1.XmlPullParser.END_TAG -> {
+                                            if (parser.name == "v" || parser.name == "t" || parser.name == "is") {
+                                                inV = false
+                                            } else if (parser.name == "c") {
+                                                var value = currentV
+                                                if (cellType == "s") {
+                                                    val index = value.toIntOrNull()
+                                                    if (index != null && index >= 0 && index < sharedStrings.size) {
+                                                        value = sharedStrings[index]
+                                                    }
+                                                }
+                                                currentRow.add(value)
+                                                currentCellIndex++
+                                                currentV = ""
+                                                cellType = ""
+                                            } else if (parser.name == "row") {
+                                                if (currentRow.size >= 2) {
+                                                    val cName = currentRow[0].trim()
+                                                    val sName = currentRow[1].trim()
+                                                    val sCodeRaw = if (currentRow.size > 2) currentRow[2].trim() else ""
+                                                    
+                                                    if (!sCodeRaw.equals("student_code", ignoreCase = true) && !cName.equals("class_name", ignoreCase = true) && sName.isNotEmpty() && cName.isNotEmpty() && !sName.equals("student_name", ignoreCase = true)) {
+                                                        val sCode = if (sCodeRaw.isEmpty()) "MT-${(1000..9999).random()}" else sCodeRaw
+                                                        if (students.none { it.parentCode == sCode }) {
+                                                            students.add(Student(UUID.randomUUID().toString(), sName, cName, sCode))
+                                                            added++
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    eventType = parser.next()
+                                }
+                                
+                                if (added > 0) {
+                                    notice = "Successfully imported $added students."
+                                } else {
+                                    notice = "No valid students found in the selected file."
+                                }
+                            } else {
+                                notice = "Invalid XLSX file structure."
+                            }
+                        } catch (e: Exception) {
+                            notice = "Error parsing XLSX file."
+                        }
+                        return@use
+                    }
+
                     var content = ""
                     var encodingError = false
                     
@@ -213,14 +361,15 @@ fun TeacherDashboardScreen(
                             }
                             val parts = cleanLine.split(delimiter)
                             
-                            if (parts.size >= 3) {
+                            if (parts.size >= 2) {
                                 val cName = parts[0].trim()
                                 val sName = parts[1].trim()
-                                val sCode = parts[2].trim()
+                                val sCodeRaw = if (parts.size > 2) parts[2].trim() else ""
                                 
-                                if (sCode.equals("student_code", ignoreCase = true)) continue
+                                if (sCodeRaw.equals("student_code", ignoreCase = true) || cName.equals("class_name", ignoreCase = true) || sName.equals("student_name", ignoreCase = true)) continue
                                 
-                                if (sName.isNotEmpty() && cName.isNotEmpty() && sCode.isNotEmpty()) {
+                                if (sName.isNotEmpty() && cName.isNotEmpty()) {
+                                    val sCode = if (sCodeRaw.isEmpty()) "MT-${(1000..9999).random()}" else sCodeRaw
                                     if (students.none { it.parentCode == sCode }) {
                                         students.add(Student(UUID.randomUUID().toString(), sName, cName, sCode))
                                         added++
