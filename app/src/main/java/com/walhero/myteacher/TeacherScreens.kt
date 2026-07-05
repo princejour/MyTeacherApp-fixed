@@ -168,8 +168,12 @@ fun TeacherDashboardScreen(
                         val lines = reader.readLines()
                         var added = 0
                         for (line in lines) {
-                            if (line.trim().isEmpty()) continue
-                            val parts = line.split(",")
+                            val cleanLine = line.trim().removePrefix("\uFEFF")
+                            if (cleanLine.isEmpty()) continue
+                            
+                            val delimiter = if (cleanLine.contains(";")) ";" else ","
+                            val parts = cleanLine.split(delimiter)
+                            
                             if (parts.size >= 3) {
                                 val cName = parts[0].trim()
                                 val sName = parts[1].trim()
@@ -185,7 +189,11 @@ fun TeacherDashboardScreen(
                                 }
                             }
                         }
-                        notice = "Successfully imported $added students."
+                        if (added > 0) {
+                            notice = "Successfully imported $added students."
+                        } else {
+                            notice = "No valid students found in the selected file."
+                        }
                     }
                 }
             } catch (e: Exception) {
