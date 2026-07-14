@@ -1,0 +1,133 @@
+name: Apply Teacher Dashboard Layout Fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-dashboard-layout-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply precise layout fixes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          screens_path = Path('app/src/main/java/com/walhero/myteacher/TeacherScreens.kt')
+          screens = screens_path.read_text(encoding='utf-8')
+
+          import_anchor = 'import androidx.compose.foundation.layout.*\n'
+          horizontal_import = 'import androidx.compose.foundation.horizontalScroll\n'
+          if horizontal_import not in screens:
+              if import_anchor not in screens:
+                  raise SystemExit('TeacherScreens import anchor not found')
+              screens = screens.replace(import_anchor, import_anchor + horizontal_import, 1)
+
+          old_classes = '''                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    classes.forEach { className ->'''
+          new_classes = '''                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    classes.forEach { className ->'''
+          if old_classes not in screens:
+              raise SystemExit('Classes row anchor not found')
+          screens = screens.replace(old_classes, new_classes, 1)
+          screens_path.write_text(screens, encoding='utf-8')
+
+          delete_path = Path('app/src/main/java/com/walhero/myteacher/TeacherDashboardDeleteScreen.kt')
+          delete_text = delete_path.read_text(encoding='utf-8')
+
+          nav_import_anchor = 'import androidx.compose.foundation.layout.height\n'
+          nav_import = 'import androidx.compose.foundation.layout.navigationBarsPadding\n'
+          if nav_import not in delete_text:
+              if nav_import_anchor not in delete_text:
+                  raise SystemExit('Delete screen import anchor not found')
+              delete_text = delete_text.replace(nav_import_anchor, nav_import_anchor + nav_import, 1)
+
+          old_layout = '''    Box(modifier = Modifier.fillMaxSize()) {
+        key(classes) {
+            TeacherDashboardScreen(
+                students = students,
+                messages = messages,
+                onStudentClick = onStudentClick,
+                onBack = onBack
+            )
+        }
+
+        if (classes.isNotEmpty()) {
+            ExtendedFloatingActionButton(
+                onClick = {
+                    selectedClassToDelete = null
+                    showDeleteDialog = true
+                },
+                icon = { Icon(Icons.Default.Delete, contentDescription = null) },
+                text = { Text("Delete Class") },
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(20.dp)
+            )
+        }
+    }'''
+
+          new_layout = '''    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .navigationBarsPadding()
+    ) {
+        Box(modifier = Modifier.weight(1f)) {
+            key(classes) {
+                TeacherDashboardScreen(
+                    students = students,
+                    messages = messages,
+                    onStudentClick = onStudentClick,
+                    onBack = onBack
+                )
+            }
+        }
+
+        if (classes.isNotEmpty()) {
+            ExtendedFloatingActionButton(
+                onClick = {
+                    selectedClassToDelete = null
+                    showDeleteDialog = true
+                },
+                icon = { Icon(Icons.Default.Delete, contentDescription = null) },
+                text = { Text("Delete Class") },
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+            )
+        }
+    }'''
+
+          if old_layout not in delete_text:
+              raise SystemExit('Delete screen layout anchor not found')
+          delete_text = delete_text.replace(old_layout, new_layout, 1)
+          delete_path.write_text(delete_text, encoding='utf-8')
+          PY
+
+      - name: Commit layout fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm .github/workflows/apply-dashboard-layout-fix.yml
+          git add app/src/main/java/com/walhero/myteacher/TeacherScreens.kt \
+                  app/src/main/java/com/walhero/myteacher/TeacherDashboardDeleteScreen.kt \
+                  .github/workflows/apply-dashboard-layout-fix.yml
+          git commit -m "Fix teacher dashboard mobile layout"
+          git push
