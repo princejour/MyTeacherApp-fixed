@@ -1,6 +1,8 @@
 package com.walhero.myteacher
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
@@ -12,21 +14,40 @@ import androidx.compose.ui.unit.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(onTeacher: () -> Unit, onParent: () -> Unit) {
+fun HomeScreen(
+    isPrivacyOptionsRequired: Boolean,
+    onTeacher: () -> Unit,
+    onParent: () -> Unit,
+    onPrivacyOptionsClick: () -> Unit,
+    onPrivacyPolicyClick: () -> Unit
+) {
     Scaffold(
         topBar = { TopAppBar(title = { Text("My Teacher") }) }
     ) { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(32.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(32.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
+            Icon(
+                Icons.Default.Person,
+                contentDescription = null,
+                modifier = Modifier.size(72.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
             Spacer(modifier = Modifier.height(24.dp))
             Text("Welcome", style = MaterialTheme.typography.headlineMedium)
-            Text("Please choose login type", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Please choose login type",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(modifier = Modifier.height(32.dp))
-            
+
             Button(
                 onClick = onParent,
                 modifier = Modifier.fillMaxWidth().height(56.dp)
@@ -41,6 +62,19 @@ fun HomeScreen(onTeacher: () -> Unit, onParent: () -> Unit) {
                 Icon(Icons.Default.Settings, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("Teacher Login", style = MaterialTheme.typography.titleMedium)
+            }
+
+            Spacer(modifier = Modifier.height(28.dp))
+            HorizontalDivider()
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (isPrivacyOptionsRequired) {
+                TextButton(onClick = onPrivacyOptionsClick) {
+                    Text("Privacy choices")
+                }
+            }
+            TextButton(onClick = onPrivacyPolicyClick) {
+                Text("Privacy Policy")
             }
         }
     }
