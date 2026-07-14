@@ -1,3 +1,8 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.plugin.compose")
+}
+
 val releaseKeystorePath = System.getenv("KEYSTORE_PATH")
 val releaseStorePassword = System.getenv("STORE_PASSWORD")
 val releaseKeyAlias = System.getenv("KEY_ALIAS")
@@ -6,11 +11,6 @@ val hasReleaseSigning = !releaseKeystorePath.isNullOrBlank() &&
     !releaseStorePassword.isNullOrBlank() &&
     !releaseKeyAlias.isNullOrBlank() &&
     !releaseKeyPassword.isNullOrBlank()
-
-plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.plugin.compose")
-}
 
 android {
     namespace = "com.walhero.myteacher"
