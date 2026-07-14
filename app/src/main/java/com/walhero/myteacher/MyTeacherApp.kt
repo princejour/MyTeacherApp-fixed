@@ -77,12 +77,31 @@ fun MyTeacherApp(
             onBack = { screen = AppScreen.Home }
         )
 
-        AppScreen.TeacherDashboard -> TeacherDashboardScreen(
+        AppScreen.TeacherDashboard -> TeacherDashboardWithDeleteScreen(
             students = students,
             messages = messages,
             onStudentClick = { student ->
                 activeStudent = student
                 screen = AppScreen.TeacherStudentDetails
+            },
+            onDeleteClass = { className ->
+                val deletedStudentIds = students
+                    .filter { it.className == className }
+                    .map { it.id }
+                    .toSet()
+                val deletedMessageIds = messages
+                    .filter { it.studentId in deletedStudentIds }
+                    .map { it.id }
+                    .toSet()
+
+                students.removeAll { it.id in deletedStudentIds }
+                messages.removeAll { it.studentId in deletedStudentIds }
+                freeOpened = freeOpened - deletedStudentIds
+                adUnlocked = adUnlocked - deletedMessageIds
+
+                if (activeStudent?.id?.let { it in deletedStudentIds } == true) {
+                    activeStudent = null
+                }
             },
             onBack = { screen = AppScreen.Home }
         )
