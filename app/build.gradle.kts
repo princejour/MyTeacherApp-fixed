@@ -11,11 +11,34 @@ android {
         applicationId = "com.walhero.myteacher"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
+
+        // The real My Teacher App ID is required so the published UMP message
+        // can be retrieved in both debug and release builds.
+        manifestPlaceholders["adMobAppId"] = "ca-app-pub-2807969310197931~7450138818"
+
+        buildConfigField(
+            "String",
+            "ADMOB_REWARDED_AD_UNIT_ID",
+            "\"ca-app-pub-2807969310197931/8753134707\""
+        )
+        buildConfigField(
+            "String",
+            "PRIVACY_POLICY_URL",
+            "\"https://princejour.github.io/my-teacher-privacy.html\""
+        )
     }
 
     buildTypes {
+        debug {
+            // Google test rewarded unit protects the AdMob account during testing.
+            buildConfigField(
+                "String",
+                "ADMOB_REWARDED_AD_UNIT_ID",
+                "\"ca-app-pub-3940256099942544/5224354917\""
+            )
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -32,6 +55,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -45,5 +69,9 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+
+    implementation("com.google.android.gms:play-services-ads:23.0.0")
+    implementation("com.google.android.ump:user-messaging-platform:4.0.0")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
