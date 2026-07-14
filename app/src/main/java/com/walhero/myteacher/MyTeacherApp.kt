@@ -1,12 +1,16 @@
 package com.walhero.myteacher
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.flow.collect
 
 @Composable
 fun MyTeacherApp(
@@ -17,14 +21,45 @@ fun MyTeacherApp(
     onPrivacyPolicyClick: () -> Unit,
     onShowRewardedAd: (onRewardEarned: () -> Unit, onUnavailable: (String) -> Unit) -> Unit
 ) {
-    var screen by remember { mutableStateOf(AppScreen.Home) }
-    var teacherPasscode by rememberSaveable { mutableStateOf("teacher123") }
-    var activeStudent by remember { mutableStateOf<Student?>(null) }
-    var freeOpened by remember { mutableStateOf<Map<String, Set<String>>>(emptyMap()) }
-    var adUnlocked by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val context = LocalContext.current.applicationContext
+    val storage = remember(context) { LocalAppStorage(context) }
 
-    val students = remember { mutableStateListOf<Student>() }
-    val messages = remember { mutableStateListOf<TeacherMessage>() }
+    var screen by remember { mutableStateOf(AppScreen.Home) }
+    var teacherPasscode by rememberSaveable { mutableStateOf(storage.loadTeacherPasscode()) }
+    var activeStudent by remember { mutableStateOf<Student?>(null) }
+    var freeOpened by remember { mutableStateOf(storage.loadFreeOpened()) }
+    var adUnlocked by remember { mutableStateOf(storage.loadAdUnlocked()) }
+
+    val students = remember {
+        mutableStateListOf<Student>().apply {
+            addAll(storage.loadStudents())
+        }
+    }
+    val messages = remember {
+        mutableStateListOf<TeacherMessage>().apply {
+            addAll(storage.loadMessages())
+        }
+    }
+
+    LaunchedEffect(students, messages) {
+        snapshotFlow { students.toList() to messages.toList() }
+            .collect { (studentSnapshot, messageSnapshot) ->
+                storage.saveStudents(studentSnapshot)
+                storage.saveMessages(messageSnapshot)
+            }
+    }
+
+    LaunchedEffect(teacherPasscode) {
+        storage.saveTeacherPasscode(teacherPasscode)
+    }
+
+    LaunchedEffect(freeOpened) {
+        storage.saveFreeOpened(freeOpened)
+    }
+
+    LaunchedEffect(adUnlocked) {
+        storage.saveAdUnlocked(adUnlocked)
+    }
 
     when (screen) {
         AppScreen.Home -> HomeScreen(
