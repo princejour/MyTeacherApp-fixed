@@ -1,7 +1,6 @@
 name: Apply Teacher Dashboard Layout Fix
 
 on:
-  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -26,78 +25,89 @@ jobs:
       - name: Install Gradle 9.3.1
         run: |
           curl -L https://services.gradle.org/distributions/gradle-9.3.1-bin.zip -o gradle.zip
-          unzip -q gradle.zip -d $RUNNER_TEMP/gradle
-          echo "$RUNNER_TEMP/gradle/gradle-9.3.1/bin" >> $GITHUB_PATH
+          unzip -q gradle.zip -d "$RUNNER_TEMP/gradle"
+          echo "$RUNNER_TEMP/gradle/gradle-9.3.1/bin" >> "$GITHUB_PATH"
 
-      - name: Apply only approved layout fixes
+      - name: Apply only the two approved layout fixes
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           screens_path = Path('app/src/main/java/com/walhero/myteacher/TeacherScreens.kt')
           screens = screens_path.read_text(encoding='utf-8')
 
-          import_anchor = 'import androidx.compose.foundation.layout.*\n'
           horizontal_import = 'import androidx.compose.foundation.horizontalScroll\n'
           if horizontal_import not in screens:
-              if import_anchor not in screens:
-                  raise SystemExit('TeacherScreens import anchor not found')
-              screens = screens.replace(import_anchor, import_anchor + horizontal_import, 1)
+              screens = screens.replace(
+                  'import androidx.compose.foundation.layout.*\n',
+                  'import androidx.compose.foundation.layout.*\n' + horizontal_import,
+                  1
+              )
 
-          old_classes = '''                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                      classes.forEach { className ->'''
-          new_classes = '''                Row(
-                      modifier = Modifier
-                          .fillMaxWidth()
-                          .horizontalScroll(rememberScrollState()),
-                      horizontalArrangement = Arrangement.spacedBy(8.dp)
-                  ) {
-                      classes.forEach { className ->'''
-          if old_classes not in screens:
-              raise SystemExit('Classes row anchor not found')
-          screens = screens.replace(old_classes, new_classes, 1)
+          class_pattern = re.compile(
+              r'(?P<indent>\s*)Row\(modifier = Modifier\.fillMaxWidth\(\), horizontalArrangement = Arrangement\.spacedBy\(8\.dp\)\) \{\n'
+              r'(?P=indent)    classes\.forEach \{ className ->'
+          )
+          class_replacement = (
+              r'\g<indent>Row(\n'
+              r'\g<indent>    modifier = Modifier\n'
+              r'\g<indent>        .fillMaxWidth()\n'
+              r'\g<indent>        .horizontalScroll(rememberScrollState()),\n'
+              r'\g<indent>    horizontalArrangement = Arrangement.spacedBy(8.dp)\n'
+              r'\g<indent>) {\n'
+              r'\g<indent>    classes.forEach { className ->'
+          )
+          screens, class_count = class_pattern.subn(class_replacement, screens, count=1)
+          if class_count != 1:
+              raise SystemExit(f'Expected exactly one classes row, found {class_count}')
           screens_path.write_text(screens, encoding='utf-8')
 
           delete_path = Path('app/src/main/java/com/walhero/myteacher/TeacherDashboardDeleteScreen.kt')
           delete_text = delete_path.read_text(encoding='utf-8')
 
-          nav_import_anchor = 'import androidx.compose.foundation.layout.height\n'
           nav_import = 'import androidx.compose.foundation.layout.navigationBarsPadding\n'
           if nav_import not in delete_text:
-              if nav_import_anchor not in delete_text:
-                  raise SystemExit('Delete screen import anchor not found')
-              delete_text = delete_text.replace(nav_import_anchor, nav_import_anchor + nav_import, 1)
+              delete_text = delete_text.replace(
+                  'import androidx.compose.foundation.layout.height\n',
+                  'import androidx.compose.foundation.layout.height\n' + nav_import,
+                  1
+              )
 
-          old_button = '''                modifier = Modifier
-                      .align(Alignment.BottomEnd)
-                      .padding(20.dp)'''
-          new_button = '''                modifier = Modifier
-                      .align(Alignment.BottomEnd)
-                      .navigationBarsPadding()
-                      .padding(end = 20.dp, bottom = 20.dp)'''
-          if old_button not in delete_text:
-              raise SystemExit('Delete button anchor not found')
-          delete_text = delete_text.replace(old_button, new_button, 1)
+          button_pattern = re.compile(
+              r'\.align\(Alignment\.BottomEnd\)\n\s*\.padding\(20\.dp\)'
+          )
+          button_replacement = (
+              '.align(Alignment.BottomEnd)\n'
+              '                    .navigationBarsPadding()\n'
+              '                    .padding(end = 20.dp, bottom = 12.dp)'
+          )
+          delete_text, button_count = button_pattern.subn(button_replacement, delete_text, count=1)
+          if button_count != 1:
+              raise SystemExit(f'Expected exactly one delete button modifier, found {button_count}')
           delete_path.write_text(delete_text, encoding='utf-8')
           PY
 
-      - name: Verify only two app files changed
+      - name: Verify only approved app files changed
         run: |
-          test "$(git diff --name-only | sort)" = "$(printf '%s\n' \
-            app/src/main/java/com/walhero/myteacher/TeacherDashboardDeleteScreen.kt \
-            app/src/main/java/com/walhero/myteacher/TeacherScreens.kt | sort)"
-          git diff --check
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' \
+            'app/src/main/java/com/walhero/myteacher/TeacherDashboardDeleteScreen.kt' \
+            'app/src/main/java/com/walhero/myteacher/TeacherScreens.kt' | sort)"
+          test "$changed" = "$expected" || {
+            echo 'Unexpected changed files:'
+            printf '%s\n' "$changed"
+            exit 1
+          }
 
-      - name: Build debug APK
+      - name: Build Debug APK
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Commit verified fixes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          rm .github/workflows/apply-dashboard-layout-fix.yml
           git add app/src/main/java/com/walhero/myteacher/TeacherScreens.kt \
-                  app/src/main/java/com/walhero/myteacher/TeacherDashboardDeleteScreen.kt \
-                  .github/workflows/apply-dashboard-layout-fix.yml
-          git commit -m "Fix only class scrolling and delete button safe position"
+                  app/src/main/java/com/walhero/myteacher/TeacherDashboardDeleteScreen.kt
+          git commit -m "Fix only approved teacher dashboard layout issues"
           git push
