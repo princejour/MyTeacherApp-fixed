@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
@@ -66,7 +67,8 @@ fun TeacherDashboardWithDeleteScreen(
                 contentColor = MaterialTheme.colorScheme.onErrorContainer,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(20.dp)
+                    .navigationBarsPadding()
+                    .padding(end = 20.dp, bottom = 12.dp)
             )
         }
     }
