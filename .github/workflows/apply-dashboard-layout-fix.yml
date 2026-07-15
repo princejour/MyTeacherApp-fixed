@@ -1,7 +1,6 @@
 name: Apply Teacher Dashboard Layout Fix
 
 on:
-  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -17,7 +16,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Apply precise layout fixes
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Gradle 9.3.1
+        run: |
+          curl -L https://services.gradle.org/distributions/gradle-9.3.1-bin.zip -o gradle.zip
+          unzip -q gradle.zip -d $RUNNER_TEMP/gradle
+          echo "$RUNNER_TEMP/gradle/gradle-9.3.1/bin" >> $GITHUB_PATH
+
+      - name: Apply only approved layout fixes
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -33,14 +44,14 @@ jobs:
               screens = screens.replace(import_anchor, import_anchor + horizontal_import, 1)
 
           old_classes = '''                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    classes.forEach { className ->'''
+                      classes.forEach { className ->'''
           new_classes = '''                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    classes.forEach { className ->'''
+                      modifier = Modifier
+                          .fillMaxWidth()
+                          .horizontalScroll(rememberScrollState()),
+                      horizontalArrangement = Arrangement.spacedBy(8.dp)
+                  ) {
+                      classes.forEach { className ->'''
           if old_classes not in screens:
               raise SystemExit('Classes row anchor not found')
           screens = screens.replace(old_classes, new_classes, 1)
@@ -56,73 +67,30 @@ jobs:
                   raise SystemExit('Delete screen import anchor not found')
               delete_text = delete_text.replace(nav_import_anchor, nav_import_anchor + nav_import, 1)
 
-          old_layout = '''    Box(modifier = Modifier.fillMaxSize()) {
-        key(classes) {
-            TeacherDashboardScreen(
-                students = students,
-                messages = messages,
-                onStudentClick = onStudentClick,
-                onBack = onBack
-            )
-        }
-
-        if (classes.isNotEmpty()) {
-            ExtendedFloatingActionButton(
-                onClick = {
-                    selectedClassToDelete = null
-                    showDeleteDialog = true
-                },
-                icon = { Icon(Icons.Default.Delete, contentDescription = null) },
-                text = { Text("Delete Class") },
-                containerColor = MaterialTheme.colorScheme.errorContainer,
-                contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(20.dp)
-            )
-        }
-    }'''
-
-          new_layout = '''    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .navigationBarsPadding()
-    ) {
-        Box(modifier = Modifier.weight(1f)) {
-            key(classes) {
-                TeacherDashboardScreen(
-                    students = students,
-                    messages = messages,
-                    onStudentClick = onStudentClick,
-                    onBack = onBack
-                )
-            }
-        }
-
-        if (classes.isNotEmpty()) {
-            ExtendedFloatingActionButton(
-                onClick = {
-                    selectedClassToDelete = null
-                    showDeleteDialog = true
-                },
-                icon = { Icon(Icons.Default.Delete, contentDescription = null) },
-                text = { Text("Delete Class") },
-                containerColor = MaterialTheme.colorScheme.errorContainer,
-                contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(horizontal = 20.dp, vertical = 12.dp)
-            )
-        }
-    }'''
-
-          if old_layout not in delete_text:
-              raise SystemExit('Delete screen layout anchor not found')
-          delete_text = delete_text.replace(old_layout, new_layout, 1)
+          old_button = '''                modifier = Modifier
+                      .align(Alignment.BottomEnd)
+                      .padding(20.dp)'''
+          new_button = '''                modifier = Modifier
+                      .align(Alignment.BottomEnd)
+                      .navigationBarsPadding()
+                      .padding(end = 20.dp, bottom = 20.dp)'''
+          if old_button not in delete_text:
+              raise SystemExit('Delete button anchor not found')
+          delete_text = delete_text.replace(old_button, new_button, 1)
           delete_path.write_text(delete_text, encoding='utf-8')
           PY
 
-      - name: Commit layout fix
+      - name: Verify only two app files changed
+        run: |
+          test "$(git diff --name-only | sort)" = "$(printf '%s\n' \
+            app/src/main/java/com/walhero/myteacher/TeacherDashboardDeleteScreen.kt \
+            app/src/main/java/com/walhero/myteacher/TeacherScreens.kt | sort)"
+          git diff --check
+
+      - name: Build debug APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Commit verified fixes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -130,5 +98,5 @@ jobs:
           git add app/src/main/java/com/walhero/myteacher/TeacherScreens.kt \
                   app/src/main/java/com/walhero/myteacher/TeacherDashboardDeleteScreen.kt \
                   .github/workflows/apply-dashboard-layout-fix.yml
-          git commit -m "Fix teacher dashboard mobile layout"
+          git commit -m "Fix only class scrolling and delete button safe position"
           git push
